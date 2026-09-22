@@ -9,6 +9,7 @@ from config import DB_DIR, GARMIN_FIT_DIR
 from garmin.garmin_client import GarminClient
 from garmin.garmin_db import GarminDB
 from coros.coros_client import CorosClient
+from coros.sts_config import STS_CONFIG
 from oss.ali_oss_client import AliOssClient
 from oss.aws_oss_client import AwsOssClient
 from utils.md5_utils import calculate_md5_file
@@ -92,16 +93,24 @@ if __name__ == "__main__":
     try:
       client = None
       ## 中国区使用阿里云OSS
+      sts = STS_CONFIG[corosClient.regionId]
       if corosClient.regionId == 2:
-         client = AliOssClient()
+         client = AliOssClient(bucket=sts["bucket"], service=sts["service"])
       elif corosClient.regionId == 1 or corosClient.regionId == 3:
-         client = AwsOssClient()
+         client = AwsOssClient(bucket=sts["bucket"], service=sts["service"])
 
       file_path = un_sync_info["file_path"]
       un_sync_id = un_sync_info["un_sync_id"]
       oss_obj = client.multipart_upload(file_path,  f"{corosClient.userId}/{calculate_md5_file(file_path)}.zip")
       size = os.path.getsize(file_path)
-      upload_result = corosClient.uploadActivity(f"fit_zip/{corosClient.userId}/{calculate_md5_file(file_path)}.zip", calculate_md5_file(file_path), f"{un_sync_id}.zip", size)
+      upload_result = corosClient.uploadActivity(
+          f"fit_zip/{corosClient.userId}/{calculate_md5_file(file_path)}.zip",
+          calculate_md5_file(file_path),
+          f"{un_sync_id}.zip",
+          size,
+          bucket=client.bucket,
+          serviceName=client.service,
+      )
       if upload_result:
           garmin_db.updateSyncStatus(un_sync_id)
     except Exception as err:

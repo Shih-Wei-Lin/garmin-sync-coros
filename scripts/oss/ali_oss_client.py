@@ -6,15 +6,14 @@ import certifi
 
 from oss2 import SizedFileAdapter, determine_part_size
 from oss2.models import PartInfo
-from utils.coros_oss_credients_utils import decode
+from utils.coros_oss_credients_utils import decode, sign_params
 
 
 class AliOssClient:
-    def __init__(self, bucket="coros-oss", service="aliyun", app_id="1660188068672619112", sign="9AD4AA35AAFEE6BB1E847A76848D58DF", v=2):
+    def __init__(self, bucket="coros-oss", service="aliyun", app_id="1660188068672619112", v=2):
         self.bucket = bucket
         self.service = service
         self.app_id = app_id
-        self.sign = sign
         self.security_token = None
         self.access_key_id = None
         self.access_key_secret = None
@@ -24,7 +23,10 @@ class AliOssClient:
         self.initClient()
 
     def initClient(self):
-        sts_token_url = f"https://faq.coros.com/openapi/oss/sts?bucket={self.bucket}&service={self.service}&app_id={self.app_id}&sign={self.sign}&v={self.v}"
+        ## sign must be computed per-request; see AwsOssClient for why a
+        ## hardcoded sign only works for the bucket it was computed against.
+        sign = sign_params({"bucket": self.bucket, "service": self.service, "app_id": self.app_id, "v": self.v})
+        sts_token_url = f"https://faq.coros.com/openapi/oss/sts?bucket={self.bucket}&service={self.service}&app_id={self.app_id}&sign={sign}&v={self.v}"
 
         response = self.req.request('GET', sts_token_url)
 

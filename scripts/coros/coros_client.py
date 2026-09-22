@@ -55,7 +55,7 @@ class CorosClient:
         self.teamapi = REGIONCONFIG[self.regionId]['teamapi']
 
     ## 上传运动
-    def uploadActivity(self, oss_object, md5, fileName, size):
+    def uploadActivity(self, oss_object, md5, fileName, size, bucket=None, serviceName=None):
         ## 判断Token 是否为空
         if self.accessToken == None:
             self.login()
@@ -66,10 +66,16 @@ class CorosClient:
           "Accept":       "application/json, text/plain, */*",
           "accesstoken": self.accessToken,
         }
-     
+
         try:
-          bucket = STS_CONFIG[self.regionId]["bucket"]
-          serviceName = STS_CONFIG[self.regionId]["service"]
+          ## bucket/serviceName describe where oss_object actually lives; let
+          ## callers override when the OSS upload target differs from the
+          ## account region's default (e.g. AWS STS creds are only issuable
+          ## for the eu-coros bucket regardless of account region).
+          if bucket is None:
+              bucket = STS_CONFIG[self.regionId]["bucket"]
+          if serviceName is None:
+              serviceName = STS_CONFIG[self.regionId]["service"]
           data = {"source":1,"timezone":32,"bucket":f"{bucket}","md5":f"{md5}","size":size,"object":f"{oss_object}","serviceName":f"{serviceName}","oriFileName":f"{fileName}"}
           json_data = json.dumps(data)
           json_str = str(json_data)
