@@ -50,6 +50,7 @@ if __name__ == "__main__":
   GARMIN_NEWEST_NUM = SYNC_CONFIG["GARMIN_NEWEST_NUM"]
 
   garminClient = GarminClient(GARMIN_EMAIL, GARMIN_PASSWORD, GARMIN_AUTH_DOMAIN, GARMIN_NEWEST_NUM)
+  garminClient.ensure_authenticated()
 
 
   ## db 名称

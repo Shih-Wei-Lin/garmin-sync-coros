@@ -1,14 +1,11 @@
-import logging
 import os
 from enum import Enum, auto
-import requests
+from pathlib import Path
 
-import garth
+from garminconnect import Garmin, GarminConnectConnectionError
 
 
 from .garmin_url_dict import GARMIN_URL_DICT
-
-logger = logging.getLogger(__name__)
 
 
 def is_duplicate_activity(detailed_import_result):
@@ -40,38 +37,46 @@ class GarminClient:
         self.auth_domain = auth_domain
         self.email = email
         self.password = password
-        self.garthClient = garth
+        self.session_dir = os.getenv(
+            "GARMIN_SESSION_DIR", str(Path(__file__).resolve().parents[2] / ".garmin-session")
+        )
+        self.api = Garmin(
+            email=email or None, password=password or None,
+            is_cn=str(auth_domain).upper() == "CN", prompt_mfa=self.prompt_mfa,
+        )
+        self.authenticated = False
         self.newestNum = int(newest_num)
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
-            "origin": GARMIN_URL_DICT.get("SSO_URL_ORIGIN"),
-            "nk": "NT"
-        }
-  
+
+  @staticmethod
+  def prompt_mfa():
+    if os.getenv("GITHUB_ACTIONS") == "true":
+      raise RuntimeError("Garmin requires MFA. Initialize the session locally; see README.")
+    return input("Garmin MFA code: ").strip()
+
+  def ensure_authenticated(self):
+    if not self.authenticated:
+      self.api.login(self.session_dir)
+      self.api.client.dump(self.session_dir)
+      self.authenticated = True
+
   ## 登录装饰器
   def login(func):    
     def ware(self, *args, **kwargs):    
+      self.ensure_authenticated()
       try:
-         garth.client.username
-      except Exception:
-        logger.warning("Garmin is not logging in or the token has expired.")
-        if self.auth_domain and str(self.auth_domain).upper() == "CN":
-          self.garthClient.configure(domain="garmin.cn")
-        self.garthClient.login(self.email, self.password)
-        
-        # del self.garthClient.sess.headers['User-Agent']
-        del self.garthClient.client.sess.headers['User-Agent']
-
-      return func(self, *args, **kwargs)
+        return func(self, *args, **kwargs)
+      finally:
+        # The library refreshes tokens during API calls; persist the updated session.
+        self.api.client.dump(self.session_dir)
     return ware
   
   @login 
   def download(self, path, **kwargs):
-     return self.garthClient.download(path, **kwargs)
+     return self.api.client.download(path, **kwargs)
   
   @login 
   def connectapi(self, path, **kwargs):
-      return self.garthClient.connectapi(path, **kwargs)
+      return self.api.client.connectapi(path, **kwargs)
      
 
   ## 获取运动
@@ -132,40 +137,22 @@ class GarminClient:
     if allowed_file_extension:
        status = "UPLOAD_EXCEPTION"
        try:
-        with open(activity_path, 'rb') as file:
-          file_data = file.read()
-          fields = {
-              'file': (file_base_name, file_data, 'text/plain')
-          }
-
-          url_path = GARMIN_URL_DICT["garmin_connect_upload"]
-          upload_url = f"https://connectapi.{self.garthClient.client.domain}{url_path}"
-          self.headers['Authorization'] = str(self.garthClient.client.oauth2_token)
-          response = requests.post(upload_url, headers=self.headers, files=fields)
-          res_code = response.status_code
-          result = response.json()
-          detailed_import_result = (
-              result.get("detailedImportResult")
-              if isinstance(result, dict)
-              else None
-          )
-          uploadId = (
-              detailed_import_result.get("uploadId")
-              if isinstance(detailed_import_result, dict)
-              else None
-          )
-          isDuplicateUpload = uploadId == None or uploadId == ''
-          if res_code == 202 and not isDuplicateUpload:
+          result = self.api.upload_activity(activity_path)
+          detailed_import_result = result.get("detailedImportResult") if isinstance(result, dict) else None
+          if isinstance(detailed_import_result, dict) and detailed_import_result.get("uploadId"):
               status = "SUCCESS"
-          elif res_code == 409 and is_duplicate_activity(detailed_import_result):
+          elif is_duplicate_activity(detailed_import_result):
+              status = "DUPLICATE_ACTIVITY"
+       except GarminConnectConnectionError as error:
+          # The library raises for HTTP 409 instead of returning its JSON body.
+          message = str(error)
+          if message.startswith("API Error 409 - ") and "Duplicate Activity." in message:
               status = "DUPLICATE_ACTIVITY"
           else:
-              print(f"  -> HTTP {res_code}: {result}")
-       except Exception as e:
-            print(f"  -> exception: {e}")
-            status = "UPLOAD_EXCEPTION"
-       finally:
-            return status
+              print(f"  -> Garmin upload failed: {message}")
+       except Exception as error:
+          print(f"  -> Garmin upload failed ({type(error).__name__})")
+       return status
     else:
         return "UPLOAD_EXCEPTION"
   

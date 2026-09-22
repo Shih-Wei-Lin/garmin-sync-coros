@@ -12,8 +12,12 @@ from typing import Union
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(CURRENT_DIR)
 
+from dotenv import load_dotenv
+
 from coros.coros_client import CorosClient
 from garmin.garmin_client import GarminClient
+
+load_dotenv(os.path.join(os.path.dirname(CURRENT_DIR), ".env"))
 
 
 TIMESTAMP_FIELDS = (

@@ -35,3 +35,7 @@ config.yaml
 /db
 /backups
 sync-coros-garmin.ps1
+/.garmin-token
+/.garmin-session/
+/.garmin-session.gpg
+.env
