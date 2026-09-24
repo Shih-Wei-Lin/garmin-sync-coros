@@ -38,7 +38,7 @@ jobs:
           python-version: '3.12'
           enable-cache: true
       - name: Install dependencies
-        run: uv pip install --system -r requirements.txt
+        run: uv pip install --system --break-system-packages -r requirements.txt
       - name: Restore sync progress
         id: sync_state
         uses: actions/cache/restore@v4
