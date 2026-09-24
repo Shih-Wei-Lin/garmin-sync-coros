@@ -30,17 +30,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@v5
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          enable-cache: true
+          cache: 'pip'
       - name: Install dependencies
-        run: |
-          uv venv
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
-          echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> $GITHUB_ENV
-          uv pip install -r requirements.txt
+        run: pip install -r requirements.txt
       - name: Restore sync progress
         id: sync_state
         uses: actions/cache/restore@v4
