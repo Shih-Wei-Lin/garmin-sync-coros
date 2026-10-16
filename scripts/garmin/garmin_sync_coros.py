@@ -2,7 +2,7 @@ import os
 import sys 
 
 CURRENT_DIR = os.path.split(os.path.abspath(__file__))[0]  # 当前目录
-config_path = CURRENT_DIR.rsplit('/', 1)[0]  # 上三级目录
+config_path = os.path.dirname(CURRENT_DIR)
 sys.path.append(config_path)
 
 from config import DB_DIR, GARMIN_FIT_DIR
@@ -61,6 +61,7 @@ if __name__ == "__main__":
   all_activities = garminClient.getAllActivities()
   if all_activities == None or len(all_activities) == 0:
       exit()
+  print(f"Garmin activity list loaded: {len(all_activities)} activities.", flush=True)
   for activity in all_activities:
       activity_id = activity["activityId"]
       garmin_db.saveActivity(activity_id)
@@ -71,6 +72,7 @@ if __name__ == "__main__":
   if un_sync_id_list == None or len(un_sync_id_list) == 0:
       exit()
   file_path_list = []
+  sync_failed = False
   
   for un_sync_id in un_sync_id_list:
     try:
@@ -87,17 +89,20 @@ if __name__ == "__main__":
       file_path_list.append(un_sync_info)
       
     except Exception as err:
-      print(err)
-  sync_failed = False
+      print(f"Garmin activity download failed ({type(err).__name__}).")
+      sync_failed = True
   for un_sync_info in file_path_list:
     try:
-      client = None
-      ## 中国区使用阿里云OSS (STS 凭证需登录 token 鉴权)
       if corosClient.regionId == 2:
-         client = AliOssClient(access_token=corosClient.accessToken)
-      elif corosClient.regionId == 1 or corosClient.regionId == 3:
-         client = AwsOssClient()
-
+        client = AliOssClient(access_token=corosClient.accessToken)
+      elif corosClient.regionId in (1, 3):
+        client = AwsOssClient(access_token=corosClient.accessToken, region_id=corosClient.regionId)
+      else:
+        raise ValueError('Unsupported COROS storage region')
+    except Exception as err:
+      print(f"COROS storage setup failed: {err}")
+      sys.exit(1)
+    try:
       file_path = un_sync_info["file_path"]
       un_sync_id = un_sync_info["un_sync_id"]
       oss_obj = client.multipart_upload(file_path,  f"{corosClient.userId}/{calculate_md5_file(file_path)}.zip")
@@ -105,6 +110,8 @@ if __name__ == "__main__":
       upload_result = corosClient.uploadActivity(f"fit_zip/{corosClient.userId}/{calculate_md5_file(file_path)}.zip", calculate_md5_file(file_path), f"{un_sync_id}.zip", size)
       if upload_result:
           garmin_db.updateSyncStatus(un_sync_id)
+      else:
+          raise RuntimeError('COROS did not accept the activity import')
     except Exception as err:
       print(err)
       garmin_db.updateExceptionSyncStatus(un_sync_id)

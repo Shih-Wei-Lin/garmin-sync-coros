@@ -87,7 +87,9 @@ class CorosClient:
           else:
              return False
         except Exception as err:
-            exit() 
+            raise CorosActivityUploadError(
+                f'COROS activity import failed ({type(err).__name__}).'
+            ) from None
 
     def getActivities(self, size:int, page:int):
         self.checkToken()

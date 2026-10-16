@@ -27,6 +27,12 @@ Actions 的明文 session 只放在 runner 暫存目錄。
 GitHub cache 有保留期限且可能被清除，並非永久儲存；cache 不存在或 session
 失效時會重新登入。若 Garmin 要求 MFA，Actions 無法互動輸入，需另外處理登入，
 本修復不保證繞過 Garmin 端的限流或 MFA。
+
+COROS 國際區上傳使用登入後的 `/api/proxy/oss/sts` 取得 AWS 臨時憑證，
+依帳號區域選擇國際或歐洲站點及 bucket，並使用憑證回應的 AWS region。
+舊的 `faq.coros.com/openapi/oss/sts` 已回傳 404 HTML，會造成 JSON 解析失敗。
+上傳憑證取得失敗會立即停止；下載、儲存上傳或活動匯入失敗會以失敗狀態結束，
+不會將該活動標記為已同步。這項修復不需要增加 Secrets。
 ## 致谢
 - 本脚本佳明模块代码来自@[yihong0618](https://github.com/yihong0618) 的 [running_page](https://github.com/yihong0618/running_page) 个人跑步主页项目,在此非常感谢@[yihong0618](https://github.com/yihong0618)大佬的无私奉献！！！
 

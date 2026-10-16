@@ -8,41 +8,50 @@ from boto3.s3.transfer import TransferConfig
 
 from oss.sts_token_error import StsTokenError
 from utils.coros_oss_credients_utils import decode
+from coros.region_config import REGIONCONFIG
+from coros.sts_config import STS_CONFIG
 
 class AwsOssClient:
-  def __init__(self, bucket="eu-coros", service="aws", app_id="1660188068672619112", sign="877571111A1EE5316E4B590103D4B5B3", v=2):
-    self.bucket = bucket
-    self.service = service
-    self.app_id = app_id
-    self.sign = sign
-    self.credentials = None
-    self.access_key_id = None
-    self.access_key_secret = None
+  def __init__(self, access_token, region_id):
+    if region_id not in (1, 3):
+      raise ValueError('AWS storage requires COROS region 1 or 3')
+    if not access_token:
+      raise StsTokenError('COROS login is required to obtain AWS upload credentials')
+    self.bucket = STS_CONFIG[region_id]['bucket']
+    self.region_id = region_id
+    self.access_token = access_token
     self.req = urllib3.PoolManager(cert_reqs='CERT_REQUIRED', ca_certs=certifi.where())
-    self.v = v
     self.client = None
     self.initClient()
   
   def initClient(self):
-        sts_token_url = f"https://faq.coros.com/openapi/oss/sts?bucket={self.bucket}&service={self.service}&app_id={self.app_id}&sign={self.sign}&v={self.v}"
-
-        response = self.req.request('GET', sts_token_url)
-
-        sts_token_response = json.loads(response.data)
-        if sts_token_response["code"] != 200:
-            raise StsTokenError("Get AWS OSS STS Token Exception")
-
-        credentials = sts_token_response["data"]["credentials"]
-        v = sts_token_response["data"]["v"]
-        self.credentials = credentials
-        self.v = v
-        credients_json = decode(credentials)
+        region = REGIONCONFIG[self.region_id]
+        sts_token_url = f"{region['hostname']}/api/proxy/oss/sts?bucket={self.bucket}&service=aws&v=2"
+        response = self.req.request(
+            'GET', sts_token_url,
+            headers={'Cookie': f"{region['TOKEN']}={self.access_token}"},
+            timeout=20, retries=False, redirect=False,
+        )
+        if response.status != 200:
+            raise StsTokenError(f'COROS AWS upload credentials: HTTP {response.status}')
+        try:
+            sts_token_response = json.loads(response.data)
+            if sts_token_response['code'] != 200:
+                raise StsTokenError('COROS rejected the AWS upload credential request')
+            credients_json = decode(sts_token_response['data']['credentials'])
+            required = ('AccessKeyId', 'SecretAccessKey', 'SessionToken', 'Region', 'Bucket')
+            if not all(isinstance(credients_json.get(k), str) and credients_json[k] for k in required):
+                raise ValueError('Incomplete AWS upload credentials')
+            if credients_json['Bucket'] != self.bucket:
+                raise ValueError('AWS bucket does not match the COROS account region')
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise StsTokenError('COROS AWS upload credentials: invalid response') from None
         self.client = boto3.client(
             "s3",
             aws_access_key_id=credients_json["AccessKeyId"],
             aws_secret_access_key=credients_json["SecretAccessKey"],
             aws_session_token=credients_json["SessionToken"],
-            endpoint_url='https://s3.eu-central-1.amazonaws.com',
+            region_name=credients_json['Region'],
         )
 
   def multipart_upload(self, filePath, fileName):
@@ -55,16 +64,13 @@ class AwsOssClient:
       )
 
       # 执行上传
-      try:
-          self.client.upload_file(
-              filePath,
-              Bucket=self.bucket,
-              Key=f"fit_zip/{fileName}",
-              Config=config
-          )
-          print(f"File {fileName} uploaded successfully!")
-      except Exception as e:
-          print(f"Upload failed: {e}")
+      self.client.upload_file(
+          filePath,
+          Bucket=self.bucket,
+          Key=f"fit_zip/{fileName}",
+          Config=config
+      )
+      print(f"File {fileName} uploaded successfully!")
 
 
 
