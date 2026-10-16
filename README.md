@@ -33,6 +33,7 @@ COROS 國際區上傳使用登入後的 `/api/proxy/oss/sts` 取得 AWS 臨時�
 舊的 `faq.coros.com/openapi/oss/sts` 已回傳 404 HTML，會造成 JSON 解析失敗。
 上傳憑證取得失敗會立即停止；下載、儲存上傳或活動匯入失敗會以失敗狀態結束，
 不會將該活動標記為已同步。這項修復不需要增加 Secrets。
+
 ## 致谢
 - 本脚本佳明模块代码来自@[yihong0618](https://github.com/yihong0618) 的 [running_page](https://github.com/yihong0618/running_page) 个人跑步主页项目,在此非常感谢@[yihong0618](https://github.com/yihong0618)大佬的无私奉献！！！
 
@@ -44,68 +45,89 @@ COROS 國際區上傳使用登入後的 `/api/proxy/oss/sts` 取得 AWS 臨時�
 
 ## Local activity backups
 
-`sync-coros-garmin.ps1` can download activities from one account without
-uploading anything to the other service. Choose the source account explicitly:
+Use Python 3.12 or later. From the repository root, install dependencies in a
+local environment:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+The backup script downloads activities from one account without uploading
+anything to the other service. Choose the source account explicitly:
 
 ```powershell
 # Set only the credentials for the selected source.
 $env:GARMIN_EMAIL = "you@example.com"
 $env:GARMIN_PASSWORD = "your-password"
 $env:GARMIN_AUTH_DOMAIN = "COM" # Optional; use CN for China.
-.\sync-coros-garmin.ps1 -Mode backup -Source garmin
+.\.venv\Scripts\python.exe scripts/backup_activities.py --source garmin
 
 $env:COROS_EMAIL = "you@example.com"
 $env:COROS_PASSWORD = "your-password"
-.\sync-coros-garmin.ps1 -Mode backup -Source coros
+.\.venv\Scripts\python.exe scripts/backup_activities.py --source coros
 ```
 
 By default, files are stored in `backups\garmin` or `backups\coros` and are
 named `YYYYMMDDTHHMMSS_<activity-id>.<extension>` using the activity start
 time. Existing activity files are skipped, so rerunning the command downloads
-only files not already present. Use `-Overwrite` to download every activity again, or
-`-OutputDirectory <path>` to use another backup location. The `backups`
+only files not already present. Use `--overwrite` to download every activity again, or
+`--output-dir <path>` to use another backup location. The `backups`
 directory is ignored by Git; keep it on durable local or cloud storage.
 
-Running `.\sync-coros-garmin.ps1` with no arguments preserves its original
-COROS to Garmin sync behavior.
-
 ## 参数配置
+
 |       参数名       |                备注                |        案例        |
 | :----------------: | :--------------------------------: | :----------------: |
 |    GARMIN_EMAIL    |          佳明登录帐号邮箱          |                    |
 |  GARMIN_PASSWORD   |            佳明登录密码            |                    |
 | GARMIN_AUTH_DOMAIN | 佳明区域（国际区填:COM 国区填:CN） |    (COM or CN)     |
-| GARMIN_NEWEST_NUM  |            最新记录条数            | (默认0，可写大于0) |
+| GARMIN_NEWEST_NUM  | 相容舊設定；目前程式讀取全部活動，未以此值限制筆數 | 可保留原值 |
 |    COROS_EMAIL     |           高驰 登录邮箱            |                    |
 |   COROS_PASSWORD   |             高驰 密码              |                    |
+| GARMIN_SESSION_KEY | Actions session cache 固定加密金鑰，依上方指令產生一次 | 不填 Garmin token |
 
 ## Github配置步骤
+
 ### 1.参数配置
+
 打开**Setting**
 ![打开Setting](doc/3451692931372_.pic.jpg)
 找到**Secrets and variables**点击**New repository secret**按钮
 ![Secrets and variables](/doc/3461692931472_.pic.jpg)
-打开**New repository secret**后将上述的参数填入，下图以佳明帐号为例,**Name**填写参数名,**Secret**填写你的信息，重复以上步骤填入五个参数即可
+打开 **New repository secret**，**Name** 填寫上表參數名，**Secret** 填寫對應的值。
+共七個 Secret：原有六個帳號／設定參數，加上 `GARMIN_SESSION_KEY`。
 ![填入参数](doc/3471692931624_.pic.jpg)
 
-### 2.配置WorkFlow权限
-打开**Setting**找到**Actions**点击**General**按钮,按照下图勾选并save
-![配置WorkFlow权限](doc/3481692931856_.pic.jpg)
+### 2.確認 Actions 已啟用
 
-### 3. wrokflow配置
-打开**github/workflows/garmin-sync-coros.yml**文件,将**GITHUB_NAME**更改为你的Github用户名、**GITHUB_EMAIL**更改为你的Github登录邮箱，更改步骤如下:
-![更改步骤](doc/3491692932110_.pic.jpg)
-更改完成后点击右上角**Commit changes...**提交即可
-![Commit](doc/3501692932345_.pic.jpg)
+在儲存庫 **Settings → Actions → General** 確認允許執行 workflow。
+新版 workflow 使用 `contents: read`，不需要授予 repository contents 寫入權限，
+也不需要設定 `GITHUB_NAME` 或 `GITHUB_EMAIL`。
 
-## 重新fork项目步骤
-点击页面上**Sync Frok**然后点击**Dicard commit**即可
-![fork sync](doc/image.png)
-## 删除db步骤
-按照图片顺序执行即可
-![alt text](doc/image5.png)
-![alt text](doc/image-1.png)
-![alt text](doc/image-2.png)
-![alt text](doc/image-3.png)
-![alt text](doc/image-4.png)
-删除完后等脚本自己执行即可
+### 3.選擇同步方向並執行
+
+| Workflow | 同步方向 | 設定檔 |
+| --- | --- | --- |
+| `garmin-sync-coros` | Garmin → COROS | [.github/workflows/garmin-sync-coros.yml](.github/workflows/garmin-sync-coros.yml) |
+| `coros-sync-garmin` | COROS → Garmin | [.github/workflows/coros-sync-garmin.yml](.github/workflows/coros-sync-garmin.yml) |
+
+開啟 GitHub **Actions**，選擇要執行的 workflow，點 **Run workflow**，
+分支選擇包含修復的 `master`，再按 **Run workflow**。
+更新程式後請建立新執行；舊執行的 **Re-run jobs** 會沿用原提交。
+兩個 workflow 也各自有排程；若只需要單向同步，可在 Actions 停用另一個 workflow。
+
+第一次找不到 session cache 是正常情況，程式會使用既有 Garmin 帳密登入。
+檢查同步步驟，以及 **Encrypt refreshed Garmin session** 和
+**Save encrypted Garmin session** 的結果，確認登入狀態已保存。
+
+若只有 Garmin 登入策略的 429 警告，請繼續確認後續步驟，不能僅據此判定最終登入失敗。
+`Garmin activity list loaded` 表示已取得活動列表；若出現
+`COROS storage setup failed`，失敗位置是 COROS 上傳憑證或儲存區設定。
+
+## 更新與同步紀錄
+
+更新 fork 前先確認並保留自己的修改；不要用 **Discard commits** 覆蓋需要的修復。
+修復登入或上傳問題不需要刪除 `db/`，刪除資料庫會失去本機同步紀錄。
+目前 `db/` 被 Git 忽略，Actions 沒有保存該資料庫，session cache 只保存登入狀態，
+因此不能用 session cache 是否命中判斷活動是否已同步。
