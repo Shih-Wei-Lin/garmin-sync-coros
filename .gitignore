@@ -35,3 +35,7 @@ config.yaml
 /db
 /backups
 sync-coros-garmin.ps1
+/.venv/
+/.env
+/.garmin-session/
+/.garmin-cache/

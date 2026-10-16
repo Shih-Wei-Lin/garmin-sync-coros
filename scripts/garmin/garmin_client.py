@@ -1,9 +1,11 @@
 import logging
 import os
 from enum import Enum, auto
+from functools import wraps
+from pathlib import Path
 import requests
 
-import garth
+from garminconnect import Garmin
 
 
 from .garmin_url_dict import GARMIN_URL_DICT
@@ -37,41 +39,43 @@ def is_duplicate_activity(detailed_import_result):
 
 class GarminClient:
   def __init__(self, email, password, auth_domain, newest_num):
-        self.auth_domain = auth_domain
-        self.email = email
-        self.password = password
-        self.garthClient = garth
+        region = str(auth_domain or 'COM').upper()
+        if region not in ('COM', 'CN'):
+          raise ValueError('GARMIN_AUTH_DOMAIN must be COM or CN')
+        self.api = Garmin(email, password, is_cn=region == 'CN')
+        self.tokenstore = os.getenv('GARMINTOKENS', str(Path(__file__).resolve().parents[2] / '.garmin-session'))
+        self.logged_in = False
         self.newestNum = int(newest_num)
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
-            "origin": GARMIN_URL_DICT.get("SSO_URL_ORIGIN"),
+            "origin": f"https://sso.garmin.{'cn' if region == 'CN' else 'com'}",
             "nk": "NT"
         }
   
   ## 登录装饰器
   def login(func):    
-    def ware(self, *args, **kwargs):    
-      try:
-         garth.client.username
-      except Exception:
-        logger.warning("Garmin is not logging in or the token has expired.")
-        if self.auth_domain and str(self.auth_domain).upper() == "CN":
-          self.garthClient.configure(domain="garmin.cn")
-        self.garthClient.login(self.email, self.password)
-        
-        # del self.garthClient.sess.headers['User-Agent']
-        del self.garthClient.client.sess.headers['User-Agent']
-
+    @wraps(func)
+    def ware(self, *args, **kwargs):
+      if not self.logged_in:
+        try:
+          self.api.login(self.tokenstore)
+          self.api.client.dump(self.tokenstore)
+        except Exception as err:
+          raise GarminNoLoginException(
+              f'Garmin login failed ({type(err).__name__}). Check credentials, region, '
+              'MFA requirements, or Garmin rate limiting; do not repeatedly retry.'
+          ) from None
+        self.logged_in = True
       return func(self, *args, **kwargs)
     return ware
   
   @login 
   def download(self, path, **kwargs):
-     return self.garthClient.download(path, **kwargs)
+     return self.api.download(path, **kwargs)
   
   @login 
   def connectapi(self, path, **kwargs):
-      return self.garthClient.connectapi(path, **kwargs)
+      return self.api.connectapi(path, **kwargs)
      
 
   ## 获取运动
@@ -139,9 +143,11 @@ class GarminClient:
           }
 
           url_path = GARMIN_URL_DICT["garmin_connect_upload"]
-          upload_url = f"https://connectapi.{self.garthClient.client.domain}{url_path}"
-          self.headers['Authorization'] = str(self.garthClient.client.oauth2_token)
-          response = requests.post(upload_url, headers=self.headers, files=fields)
+          # Validate/refresh the session before the raw upload that preserves HTTP 409 details.
+          self.api.connectapi('/userprofile-service/socialProfile')
+          upload_url = f"https://connectapi.{self.api.client.domain}{url_path}"
+          headers = {**self.headers, **self.api.client.get_api_headers()}
+          response = requests.post(upload_url, headers=headers, files=fields, timeout=60)
           res_code = response.status_code
           result = response.json()
           detailed_import_result = (

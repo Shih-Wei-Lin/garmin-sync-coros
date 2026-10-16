@@ -3,53 +3,82 @@ name: garmin-sync-coros
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 1,8,21 * * ?'
+    - cron: '0 1,8,21 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: garmin-coros-sync
+  cancel-in-progress: false
+
 env:
-  GITHUB_NAME: Shih-Wei-Lin
-  GITHUB_EMAIL: sean7115@gamil.com
-  ## 佳明配置
   GARMIN_AUTH_DOMAIN: ${{ secrets.GARMIN_AUTH_DOMAIN }}
   GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
   GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
   GARMIN_NEWEST_NUM: ${{ secrets.GARMIN_NEWEST_NUM }}
-
-  ## Coros配置
   COROS_EMAIL: ${{ secrets.COROS_EMAIL }}
   COROS_PASSWORD: ${{ secrets.COROS_PASSWORD }}
+  GARMINTOKENS: /tmp/garmin-session
+  RUN_TYPE: garmin_to_coros
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-      # from pdm
-      - name: Set Variables
-        id: set_variables
-        run: |
-          echo "::set-output name=PY::$(python -c 'import hashlib, sys;print(hashlib.sha256(sys.version.encode()+sys.executable.encode()).hexdigest())')"
-          echo "::set-output name=PIP_CACHE::$(pip cache dir)"
-      - name: Cache PIP
-        uses: actions/cache@v3
-        with:
-          path: ${{ steps.set_variables.outputs.PIP_CACHE }}
-          key: Ubuntu-pip-${{ steps.set_variables.outputs.PY }}
+          python-version: '3.12'
+          cache: pip
       - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Identify session cache
+        id: session
+        env:
+          GARMIN_SESSION_KEY: ${{ secrets.GARMIN_SESSION_KEY }}
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-        if: steps.pip-cache.outputs.cache-hit != 'true'
-      - name: Run Garmin Sync
-        run: |
-          python scripts/garmin/garmin_sync_coros.py
-      - name: Push new cookie
-        run: |
-          git config --local user.email "${{ env.GITHUB_EMAIL }}"
-          git config --local user.name "${{ env.GITHUB_NAME }}"
-          git add .
-          git commit -m 'update garmin activity' || echo "nothing to commit"
-          git push || echo "nothing to push"
+          python - <<'PY'
+          import hashlib, os
+          from cryptography.fernet import Fernet
+          key = os.environ['GARMIN_SESSION_KEY']
+          if not key:
+              raise SystemExit('Add GARMIN_SESSION_KEY to Actions secrets first; see README.')
+          try:
+              Fernet(key)
+          except ValueError:
+              raise SystemExit('GARMIN_SESSION_KEY must be a Fernet key; see README.') from None
+          identity = '\0'.join([os.environ['GARMIN_EMAIL'], os.environ['GARMIN_AUTH_DOMAIN'], key])
+          digest = hashlib.sha256(identity.encode()).hexdigest()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'prefix=garmin-session-v1-{digest}-\n')
+          PY
+      - name: Restore encrypted Garmin session
+        uses: actions/cache/restore@v4
+        with:
+          path: .garmin-cache/session.enc
+          key: ${{ steps.session.outputs.prefix }}${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ${{ steps.session.outputs.prefix }}
+      - name: Decrypt Garmin session
+        id: decrypt
+        env:
+          GARMIN_SESSION_KEY: ${{ secrets.GARMIN_SESSION_KEY }}
+        run: python scripts/garmin_session_cache.py restore
+      - name: Run Garmin Sync Coros
+        if: env.RUN_TYPE == 'garmin_to_coros'
+        run: python scripts/garmin/garmin_sync_coros.py
+      - name: Run Coros Sync Garmin
+        if: env.RUN_TYPE == 'coros_to_garmin'
+        run: python scripts/coros/coros_sync_garmin.py
+      - name: Encrypt refreshed Garmin session
+        id: encrypt
+        if: ${{ always() && steps.decrypt.outcome == 'success' }}
+        env:
+          GARMIN_SESSION_KEY: ${{ secrets.GARMIN_SESSION_KEY }}
+        run: python scripts/garmin_session_cache.py save
+      - name: Save encrypted Garmin session
+        if: ${{ always() && steps.encrypt.outcome == 'success' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .garmin-cache/session.enc
+          key: ${{ steps.session.outputs.prefix }}${{ github.run_id }}-${{ github.run_attempt }}
